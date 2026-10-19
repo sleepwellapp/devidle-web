@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta name="robots" content="noindex, nofollow">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0D1117">
+    <title>Dev Idle</title>
+    <link rel="preload" href="Build/97362f2f1efab6fa10acee343d2fb4d8.wasm.unityweb" as="fetch" crossorigin>
+    <link rel="preload" href="Build/1f749ad4a252c7f0b90d07d8c56b1cc8.data.unityweb" as="fetch" crossorigin>
+    <style>
+      :root { --bg: #0D1117; --accent: #7EE787; --ink: #E6EDF3; }
+      html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); overflow: hidden;
+        touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+      /* Le jeu est PORTRAIT : sur un écran large on garde la colonne, centrée, plafonnée à
+         540 px (un téléphone tenu dans la main, pas une affiche), et le fond de la page prend
+         la nuit du jeu — jamais de bandes blanches. La MARGE intérieure, elle, est posée par
+         le jeu (IPlatform.ExtraInsets, GAP_CONFIG.margin) : son fond reste plein cadre. */
+      #stage { position: fixed; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+        height: 100%; width: min(100vw, calc(100vh * 0.4615), 540px); width: min(100vw, calc(100dvh * 0.4615), 540px); }
+      #canvas { width: 100%; height: 100%; display: block; outline: none; background: var(--bg); }
+      #boot { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+        justify-content: center; gap: 18px; background: var(--bg); transition: opacity .35s ease-out;
+        font: 15px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--ink); }
+      #boot.done { opacity: 0; pointer-events: none; }
+      #boot .title { font-size: 22px; letter-spacing: .02em; color: var(--accent); }
+      #boot .title::before { content: "$ "; opacity: .55; }
+      #boot .track { width: min(62%, 280px); height: 4px; border-radius: 2px; background: rgba(127,127,127,.18); overflow: hidden; }
+      #boot .fill { height: 100%; width: 100%; background: var(--accent); transform-origin: left; transform: scaleX(0); transition: transform .2s ease-out; }
+      #boot .label { font-size: 13px; opacity: .7; min-height: 1.4em; }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="canvas" tabindex="-1"></canvas>
+      <div id="boot">
+        <div class="title">Dev Idle</div>
+        <div class="track"><div class="fill" id="boot-fill"></div></div>
+        <div class="label" id="boot-label">chargement</div>
+      </div>
+    </div>
+    <script src="gap-config.js"></script>
+    <script>
+      (function () {
+        var cfg = window.GAP_CONFIG || {};
+        var boot = document.getElementById('boot');
+        var fill = document.getElementById('boot-fill');
+        var label = document.getElementById('boot-label');
+        var canvas = document.getElementById('canvas');
+        var shown = 0;
+
+        // Une seule barre pour trois étapes : le SDK du portail (5 %), le moteur (85 %), puis
+        // le démarrage du jeu lui-même (10 %, rapporté par IPlatform.ReportLoading).
+        function progress(p) {
+          p = Math.max(shown, Math.min(1, p));
+          shown = p;
+          fill.style.transform = 'scaleX(' + p + ')';
+          label.textContent = 'chargement ' + Math.round(p * 100) + ' %';
+          if (window.bridge && typeof window.bridge.setGameLoadingProgress === 'function') {
+            try { window.bridge.setGameLoadingProgress(Math.round(p * 100)); } catch (e) {}
+          }
+        }
+        window.gapGameLoading = function (p) { progress(0.9 + 0.1 * p); };
+        window.gapGameReady = function () {
+          progress(1);
+          boot.classList.add('done');
+          setTimeout(function () { boot.remove(); }, 450);
+          canvas.focus();
+        };
+
+        function script(src) {
+          return new Promise(function (resolve, reject) {
+            var s = document.createElement('script');
+            s.src = src; s.onload = resolve; s.onerror = function () { reject(new Error(src)); };
+            document.body.appendChild(s);
+          });
+        }
+
+        // Le SDK des portails, seulement dans un paquet de portail, et TOUJOURS la copie
+        // locale (les portails refusent les requêtes externes). Un SDK qui échoue ne bloque
+        // jamais le jeu : il tourne alors comme sur le web générique. ⚠️ « Bloquer » inclut
+        // ne JAMAIS répondre : hors de son portail, le SDK d'une plateforme attend son hôte
+        // indéfiniment (mesuré : celui de Playgama hors playgama.com). D'où le délai.
+        var sdk = !cfg.bridge ? Promise.resolve() : script('playgama-bridge.js').then(function () {
+          window.bridge.engine = 'unity';
+          window.bridge.gameVersion = "1.0.178";
+          return Promise.race([window.bridge.initialize(), new Promise(function (_, reject) {
+            setTimeout(function () { reject(new Error('délai dépassé')); }, cfg.bridgeTimeoutMs || 10000);
+          })]);
+        }).catch(function (e) { console.warn('[gap] bridge indisponible, jeu en mode web', e); window.bridge = undefined; });
+
+        sdk.then(function () {
+          progress(cfg.bridge ? 0.05 : 0.02);
+          return script('Build/d418c65109e8dc7190f0ce8372f3754e.loader.js');
+        }).then(function () {
+          return createUnityInstance(canvas, {
+            dataUrl: 'Build/1f749ad4a252c7f0b90d07d8c56b1cc8.data.unityweb',
+            frameworkUrl: 'Build/a4baca075bbb8158adbc6c22b2abc66f.framework.js.unityweb',
+            codeUrl: 'Build/97362f2f1efab6fa10acee343d2fb4d8.wasm.unityweb',
+            streamingAssetsUrl: 'StreamingAssets',
+            companyName: "goodapps",
+            productName: "Dev Idle",
+            productVersion: "1.0.178",
+            // Au-delà de 2, un téléphone dessine trois fois plus de pixels pour une UI qui
+            // n'en montre pas davantage : on plafonne, la batterie dit merci.
+            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2)
+          }, function (p) { progress(0.05 + 0.85 * p); });
+        }).then(function (instance) {
+          window.unityInstance = instance;
+        }).catch(function (e) {
+          console.error(e);
+          label.textContent = 'le jeu n’a pas pu démarrer — recharge la page';
+        });
+      })();
+    </script>
+  </body>
+</html>
